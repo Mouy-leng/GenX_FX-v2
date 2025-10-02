@@ -6,14 +6,18 @@ import sqlite3
 import os
 from datetime import datetime
 from api.services.ml_service import MLService
+from api.routers import communication
 
 app = FastAPI(
     title="GenX-FX Trading Platform API",
-    description="Trading platform with ML-powered predictions",
-    version="1.0.0",
+    description="Trading platform with ML-powered predictions and multi-agent communication",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Include the communication router
+app.include_router(communication.router, prefix="/communication", tags=["communication"])
 
 # Add CORS middleware
 app.add_middleware(
