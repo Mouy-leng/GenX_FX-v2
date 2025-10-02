@@ -15,6 +15,7 @@ from datetime import datetime
 import logging
 
 import typer
+import requests
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -48,7 +49,7 @@ class HeadCLI:
                 'commands': ['update', 'plugin-install', 'config-set', 'verify', 'test', 'deploy', 'status', 'auth', 'schedule', 'monitor']
             },
             'genx': {
-                'file': 'genx_cli.py', 
+                'file': 'genx_cli.py',
                 'description': 'GenX FX - Complete trading system management',
                 'commands': ['status', 'init', 'config', 'logs', 'tree', 'excel', 'forexconnect']
             },
@@ -59,6 +60,69 @@ class HeadCLI:
             }
         }
         
+        # --- Communication Hub Integration ---
+        self.comm_api_url = "http://127.0.0.1:8080/communication"
+        self.agent_id_file = self.project_root / "agent_id.json"
+        self.agent_id = None
+        # In a real multi-agent setup, this would be unique per agent instance
+        self.agent_email = "lengkundee01@gmail.com"
+        self.agent_name = f"Jules - {os.path.basename(os.getcwd())}" # A more dynamic name
+        self._register_agent()
+
+    def _load_agent_id(self):
+        if self.agent_id_file.exists():
+            with open(self.agent_id_file, "r") as f:
+                try:
+                    data = json.load(f)
+                    self.agent_id = data.get("agent_id")
+                except json.JSONDecodeError:
+                    self.agent_id = None
+
+    def _save_agent_id(self):
+        with open(self.agent_id_file, "w") as f:
+            json.dump({"agent_id": self.agent_id}, f)
+
+    def _register_agent(self):
+        self._load_agent_id()
+        url = f"{self.comm_api_url}/register"
+        payload = {
+            "name": self.agent_name,
+            "email": self.agent_email
+        }
+        try:
+            console.print(f"🤝 Registering with communication hub...")
+            response = requests.post(url, json=payload, timeout=5)
+            response.raise_for_status()
+            agent_data = response.json()
+            new_agent_id = agent_data.get("id")
+            if new_agent_id:
+                if self.agent_id != new_agent_id:
+                    self.agent_id = new_agent_id
+                    self._save_agent_id()
+                console.print(f"✅ [green]Registration successful. Agent ID: {self.agent_id}[/green]")
+            else:
+                console.print("⚠️ [yellow]Registration response did not include an agent ID.[/yellow]")
+        except requests.exceptions.RequestException:
+            console.print(f"❌ [red]Could not connect to communication hub. Working offline.[/red]")
+
+    def _update_state(self, new_state: Dict):
+        if not self.agent_id: return
+        url = f"{self.comm_api_url}/state/{self.agent_id}"
+        try:
+            requests.post(url, json=new_state, timeout=3)
+        except requests.exceptions.RequestException: pass
+
+    def _send_broadcast(self, event_type: str, payload: Dict):
+        if not self.agent_id: return
+        url = f"{self.comm_api_url}/messages"
+        message = {
+            "sender_id": self.agent_id, "recipient_id": "broadcast",
+            "event_type": event_type, "payload": payload
+        }
+        try:
+            requests.post(url, json=message, timeout=3)
+        except requests.exceptions.RequestException: pass
+
     def run_cli_command(self, cli_name: str, command: str, args: List[str] = None) -> int:
         """Run a command from a specific CLI"""
         if cli_name not in self.available_clis:
@@ -79,21 +143,37 @@ class HeadCLI:
         if args:
             cmd.extend(args)
         
+        # --- Communication Hub Integration ---
+        task_payload = {"cli": cli_name, "command": command, "args": args or []}
+        self._update_state({"current_task": task_payload, "status": "starting"})
+        self._send_broadcast(event_type="task_started", payload=task_payload)
+
         try:
             # Run the command
             if cli_name == 'chat' and command == 'interactive':
                 # For interactive chat, use subprocess.run without capture
-                return subprocess.run(cmd).returncode
+                result_code = subprocess.run(cmd).returncode
+                self._send_broadcast(event_type="task_completed", payload={**task_payload, "return_code": result_code})
+                return result_code
             else:
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.stdout:
                     console.print(result.stdout)
                 if result.stderr:
                     console.print(f"[red]{result.stderr}[/red]")
+
+                success = result.returncode == 0
+                self._send_broadcast(
+                    event_type="task_completed",
+                    payload={**task_payload, "return_code": result.returncode, "success": success}
+                )
                 return result.returncode
         except Exception as e:
             console.print(f"❌ [red]Error running command: {e}[/red]")
+            self._send_broadcast(event_type="task_failed", payload={**task_payload, "error": str(e)})
             return 1
+        finally:
+             self._update_state({"current_task": None, "status": "idle"})
     
     def show_overview(self):
         """Show system overview"""
