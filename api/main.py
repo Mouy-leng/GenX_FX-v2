@@ -4,7 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from api.services.ml_service import MLService
 from api.routers import communication
 
@@ -117,6 +117,88 @@ async def market_data(request: Request):
     if "drop table" in payload_str or "' or '" in payload_str or "delete from" in payload_str:
         return JSONResponse(status_code=400, content={"error": "Malicious payload detected"})
     return {"status": "received", "data": data}
+
+
+def get_db_connection():
+    conn = sqlite3.connect("genxdb_fx.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def initialize_market_data_table():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Create table if it doesn't exist
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS market_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        timestamp DATETIME NOT NULL,
+        open_price REAL,
+        high_price REAL,
+        low_price REAL,
+        close_price REAL,
+        volume REAL
+    );
+    """)
+
+    # Check if there's any data
+    cursor.execute("SELECT COUNT(*) FROM market_data")
+    count = cursor.fetchone()[0]
+
+    # Insert sample data if the table is empty
+    if count == 0:
+        sample_data = [
+            ('EUR/USD', datetime.now() - timedelta(minutes=10), 1.0550, 1.0560, 1.0540, 1.0555, 1000),
+            ('EUR/USD', datetime.now() - timedelta(hours=1), 1.0555, 1.0575, 1.0550, 1.0570, 1200),
+            ('EUR/USD', datetime.now() - timedelta(hours=2), 1.0570, 1.0580, 1.0565, 1.0575, 1100),
+            ('EUR/USD', datetime.now() - timedelta(days=1), 1.0500, 1.0520, 1.0490, 1.0510, 2500),
+            ('GBP/USD', datetime.now() - timedelta(minutes=30), 1.2150, 1.2160, 1.2140, 1.2155, 800)
+        ]
+        cursor.executemany("""
+        INSERT INTO market_data (symbol, timestamp, open_price, high_price, low_price, close_price, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, sample_data)
+
+    conn.commit()
+    conn.close()
+
+# Initialize the table on startup
+initialize_market_data_table()
+
+@app.get("/api/v1/market-data/{symbol:path}/{timeframe}")
+async def get_historical_market_data(symbol: str, timeframe: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    time_delta = None
+    if timeframe.upper() == '1H':
+        time_delta = timedelta(hours=1)
+    elif timeframe.upper() == '4H':
+        time_delta = timedelta(hours=4)
+    elif timeframe.upper() == '1D':
+        time_delta = timedelta(days=1)
+
+    if not time_delta:
+        return JSONResponse(status_code=400, content={"error": "Invalid timeframe. Use '1H', '4H', or '1D'."})
+
+    start_time = datetime.now() - time_delta
+
+    cursor.execute("""
+        SELECT timestamp, open_price, high_price, low_price, close_price, volume
+        FROM market_data
+        WHERE symbol = ? AND timestamp >= ?
+        ORDER BY timestamp DESC
+    """, (symbol, start_time))
+
+    data = cursor.fetchall()
+    conn.close()
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "data": [dict(row) for row in data]
+    }
 
 @app.get("/trading-pairs")
 async def get_trading_pairs():
