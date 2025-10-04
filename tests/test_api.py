@@ -8,7 +8,8 @@ try:
     from fastapi.testclient import TestClient
     from api.main import app
     FASTAPI_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    print(f"Error importing FastAPI or app: {e}")
     FASTAPI_AVAILABLE = False
 
 if FASTAPI_AVAILABLE:
@@ -130,3 +131,18 @@ def test_config_loading():
     assert isinstance(config, dict)
     assert "database_url" in config
     assert "symbols" in config
+
+def test_get_historical_market_data_valid():
+    """Test get_historical_market_data with a valid symbol and timeframe"""
+    response = client.get("/api/v1/market-data/EUR%2FUSD/1H")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "EUR/USD"
+    assert data["timeframe"] == "1H"
+    assert isinstance(data["data"], list)
+
+def test_get_historical_market_data_invalid_timeframe():
+    """Test get_historical_market_data with an invalid timeframe"""
+    response = client.get("/api/v1/market-data/EUR%2FUSD/INVALID")
+    assert response.status_code == 400
+    assert "error" in response.json()
