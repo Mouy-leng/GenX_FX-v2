@@ -24,6 +24,9 @@ from rich.prompt import Confirm
 from rich.tree import Tree
 from rich.columns import Columns
 
+# Import the new session orchestration module
+from core import session_orchestration
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -33,11 +36,19 @@ logger = logging.getLogger(__name__)
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
-    help="🚀 GenX Trading Platform - Head CLI", 
+    help="🚀 GenX Trading Platform - Head CLI",
     rich_markup_mode="rich",
     pretty_exceptions_enable=False
 )
 console = Console()
+
+# Create a new Typer app for session commands
+session_app = typer.Typer(
+    help="📱 Session Orchestration Commands",
+    rich_markup_mode="rich"
+)
+app.add_typer(session_app, name="session")
+
 
 class HeadCLI:
     def __init__(self):
@@ -59,7 +70,7 @@ class HeadCLI:
                 'commands': ['interactive']
             }
         }
-        
+
         # --- Communication Hub Integration ---
         self.comm_api_url = "http://127.0.0.1:8080/communication"
         self.agent_id_file = self.project_root / "agent_id.json"
@@ -68,6 +79,18 @@ class HeadCLI:
         self.agent_email = "lengkundee01@gmail.com"
         self.agent_name = f"Jules - {os.path.basename(os.getcwd())}" # A more dynamic name
         self._register_agent()
+
+        # --- Session Orchestration Config ---
+        self.session_config = self.load_session_config()
+
+    def load_session_config(self):
+        """Loads the session configuration from the JSON file."""
+        config_path = self.project_root / "config" / "session_config.json"
+        if not config_path.exists():
+            console.print("⚠️ [yellow]Session config file not found. Session commands may fail.[/yellow]")
+            return {}
+        with open(config_path, "r") as f:
+            return json.load(f)
 
     def _load_agent_id(self):
         if self.agent_id_file.exists():
@@ -220,6 +243,80 @@ class HeadCLI:
 # Create CLI app instance
 head_cli = HeadCLI()
 
+
+@session_app.command("auth")
+def session_auth():
+    """Authenticate the device using its build identity."""
+    console.print("🔐 Authenticating device...")
+    response = session_orchestration.authenticate_device(head_cli.session_config)
+    if response:
+        console.print("✅ [green]Device authenticated successfully.[/green]")
+        console.print(response)
+    else:
+        console.print("❌ [red]Device authentication failed.[/red]")
+
+@session_app.command("trigger")
+def session_trigger(flow_name: str = typer.Argument(..., help="The name of the flow to trigger.")):
+    """Trigger an orchestration flow on the session server."""
+    console.print(f"🚀 Triggering flow: {flow_name}...")
+    response = session_orchestration.trigger_flow(head_cli.session_config, flow_name)
+    if response:
+        console.print(f"✅ [green]Flow '{flow_name}' triggered successfully.[/green]")
+        console.print(response)
+    else:
+        console.print(f"❌ [red]Failed to trigger flow '{flow_name}'.[/red]")
+
+
+@session_app.command("sync")
+def session_sync(notes_file: str = typer.Argument("notes.json", help="Path to the notes JSON file.")):
+    """Sync notes or artifacts to the LiteWriter endpoint."""
+    console.print(f"🔄 Syncing notes from {notes_file}...")
+    response = session_orchestration.sync_notes(head_cli.session_config, notes_file)
+    if response:
+        console.print("✅ [green]Notes synced successfully.[/green]")
+        console.print(response)
+    else:
+        console.print("❌ [red]Failed to sync notes.[/red]")
+
+
+@session_app.command("full-run")
+def session_full_run(
+    flow_name: str = typer.Argument("sync_notes", help="The name of the flow to trigger."),
+    notes_file: str = typer.Argument("notes.json", help="Path to the notes JSON file.")
+):
+    """Perform a full orchestration run: auth, trigger, and sync."""
+    console.print("🏃‍♂️ [bold]Starting full session orchestration run...[/bold]")
+
+    # 1. Authenticate
+    console.print("\n[b]Step 1: Authenticating Device[/b]")
+    auth_response = session_orchestration.authenticate_device(head_cli.session_config)
+    if not auth_response:
+        console.print("❌ [red]Authentication failed. Aborting full run.[/red]")
+        raise typer.Exit(1)
+    console.print("✅ [green]Device authenticated.[/green]")
+    console.print(auth_response)
+
+    # 2. Trigger Flow
+    console.print(f"\n[b]Step 2: Triggering Flow '{flow_name}'[/b]")
+    trigger_response = session_orchestration.trigger_flow(head_cli.session_config, flow_name)
+    if not trigger_response:
+        console.print(f"❌ [red]Triggering flow '{flow_name}' failed. Aborting.[/red]")
+        raise typer.Exit(1)
+    console.print(f"✅ [green]Flow '{flow_name}' triggered.[/green]")
+    console.print(trigger_response)
+
+    # 3. Sync Notes
+    console.print(f"\n[b]Step 3: Syncing Notes from '{notes_file}'[/b]")
+    sync_response = session_orchestration.sync_notes(head_cli.session_config, notes_file)
+    if not sync_response:
+        console.print(f"❌ [red]Syncing notes from '{notes_file}' failed.[/red]")
+        raise typer.Exit(1)
+    console.print("✅ [green]Notes synced.[/green]")
+    console.print(sync_response)
+
+    console.print("\n🏁 [bold green]Full session orchestration run completed successfully![/bold green]")
+
+
 @app.command()
 def overview():
     """Show system overview and status"""
@@ -370,11 +467,12 @@ def main(
       head_cli genx status           # GenX system status
       head_cli chat                  # Start interactive chat
       head_cli status                # Complete system status
+      head_cli session auth          # Authenticate device for session
     """
     if version:
         console.print("GenX Trading Platform Head CLI v1.0.0")
         raise typer.Exit()
-    
+
     if ctx.invoked_subcommand is None:
         # Show overview if no command provided
         head_cli.show_overview()
