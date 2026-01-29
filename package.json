@@ -30,7 +30,7 @@
     "cors": "^2.8.5",
     "drizzle-orm": "^0.44.6",
     "embla-carousel-react": "^8.0.0",
-    "express": "^5.1.0",
+    "express": "^5.2.1",
     "firebase-tools": "^15.3.1",
     "lucide-react": "^0.562.0",
     "react": "^18.2.0",
@@ -48,7 +48,7 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/cors": "^2.8.13",
-    "@types/express": "^5.0.3",
+    "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
